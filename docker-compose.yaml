@@ -4,6 +4,8 @@ x-php: &php
     dockerfile: ./.docker/php/Dockerfile
   working_dir: /var/www/html
   restart: always
+  volumes:
+    - ./:/var/www/html
   expose:
     - "9000"
   depends_on:
@@ -21,7 +23,7 @@ services:
   # PostGres Service
   pgsql:
     container_name: PgSQL
-    image: "postgres:13-alpine"
+    image: "postgres:18-alpine"
     restart: always
     environment:
       POSTGRES_USER: "postgres"

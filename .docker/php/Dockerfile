@@ -1,8 +1,4 @@
-FROM php:8-fpm
-ARG UID
-ARG GID
-ENV UID=${UID}
-ENV GID=${GID}
+FROM php:8.4-fpm
 # Install apt-transport-https for Yarn repository
 RUN apt-get install apt-transport-https -y
 RUN apt-get update && apt-get install -y gnupg2
