@@ -1,13 +1,30 @@
+x-php-environment: &php-environment
+  AUTORUN_ENABLED: "true"
+  AUTORUN_LARAVEL_MIGRATION: "true"
+  AUTORUN_LARAVEL_MIGRATION_FORCE: "true"
+  PHP_OPCACHE_ENABLE: "1"
+  PHP_OPCACHE_MEMORY_CONSUMPTION: "256"
+  PHP_OPCACHE_INTERNED_STRINGS_BUFFER: "16"
+  PHP_OPCACHE_MAX_ACCELERATED_FILES: "10000"
+  PHP_OPCACHE_VALIDATE_TIMESTAMPS: "0"
+  PHP_POST_MAX_SIZE: "120M"
+  PHP_UPLOAD_MAX_FILE_SIZE: "120M"
+  PHP_MAX_FILE_UPLOADS: "100"
+
 x-php: &php
-  build: 
+  build:
     context: .
     dockerfile: ./.docker/php/Dockerfile
   working_dir: /var/www/html
-  restart: always
+  restart: unless-stopped
+  env_file: .env
   volumes:
-    - ./:/var/www/html
+    - storage:/var/www/html/storage
   expose:
     - "9000"
+  networks:
+    - app
+    - database
   depends_on:
     pgsql:
       condition: service_healthy
@@ -19,48 +36,141 @@ x-logging: &logging
       max-size: 100m
       max-file: "10"
 
+networks:
+  app:
+  database:
+
+volumes:
+  storage:
+  pgdata:
+
 services:
-  # PostGres Service
   pgsql:
     container_name: PgSQL
     image: "postgres:18-alpine"
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "password"
-      POSTGRES_DB: "test"
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE}
       PGDATA: /data/postgres
     volumes:
-      - ./postgres:/data/postgres
+      - pgdata:/data/postgres
+    networks:
+      - database
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d test"]
-      interval: 30s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   php:
     <<: [*php, *logging]
-    command: ["php-fpm", "-y", "/usr/local/etc/php-fpm.conf", "-R"]
+    environment:
+      <<: *php-environment
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
-  queue:
+  queue-default:
     <<: [*php, *logging]
-    command: php artisan queue:work
+    environment:
+      <<: *php-environment
+      AUTORUN_ENABLED: "false"
+    command: php artisan queue:work --queue=default --tries=3 --backoff=10 --max-time=3600
+    stop_grace_period: 60s
+    depends_on:
+      pgsql:
+        condition: service_healthy
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "healthcheck-queue"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  queue-high:
+    <<: [*php, *logging]
+    environment:
+      <<: *php-environment
+      AUTORUN_ENABLED: "false"
+    command: php artisan queue:work --queue=high --tries=3 --backoff=10 --max-time=3600
+    stop_grace_period: 60s
+    depends_on:
+      pgsql:
+        condition: service_healthy
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "healthcheck-queue"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   scheduler:
     <<: [*php, *logging]
+    environment:
+      <<: *php-environment
+      AUTORUN_ENABLED: "false"
     command: php artisan schedule:work
+    depends_on:
+      pgsql:
+        condition: service_healthy
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "healthcheck-schedule"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
-  # Nginx Service
   nginx:
-    build: ./.docker/nginx
+    build:
+      context: .
+      dockerfile: ./.docker/nginx/Dockerfile
+      additional_contexts:
+        php: service:php
     container_name: Nginx
     ports:
       - 80:80
       - 443:443
-    restart: always
+    restart: unless-stopped
+    networks:
+      - app
     volumes:
-      - ./:/var/www/html:ro
-      - ./.docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
-      - php
+      php:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
