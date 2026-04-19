@@ -1,4 +1,6 @@
 x-php-environment: &php-environment
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
   AUTORUN_ENABLED: "true"
   AUTORUN_LARAVEL_MIGRATION: "true"
   AUTORUN_LARAVEL_MIGRATION_FORCE: "true"
@@ -18,8 +20,10 @@ x-php: &php
   working_dir: /var/www/html
   restart: unless-stopped
   env_file: .env
+  environment: *php-environment
   volumes:
     - ./:/var/www/html
+    - /var/www/html/vendor
   expose:
     - "9000"
   networks:
@@ -35,6 +39,28 @@ x-logging: &logging
     options:
       max-size: 100m
       max-file: "10"
+
+x-worker-healthcheck: &worker-healthcheck
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+x-worker: &worker
+  <<: [*php, *logging]
+  environment:
+    <<: *php-environment
+    AUTORUN_ENABLED: "false"
+  stop_grace_period: 60s
+  depends_on:
+    pgsql:
+      condition: service_healthy
+    php:
+      condition: service_healthy
+  deploy:
+    resources:
+      limits:
+        memory: 256M
 
 networks:
   app:
@@ -70,93 +96,39 @@ services:
 
   php:
     <<: [*php, *logging]
-    environment:
-      <<: *php-environment
     healthcheck:
+      <<: *worker-healthcheck
       test: ["CMD-SHELL", "php-fpm-healthcheck"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
     deploy:
       resources:
         limits:
           memory: 512M
 
   queue-default:
-    <<: [*php, *logging]
-    environment:
-      <<: *php-environment
-      AUTORUN_ENABLED: "false"
+    <<: *worker
     command: php artisan queue:work --queue=default --tries=3 --backoff=10 --max-time=3600
-    stop_grace_period: 60s
-    depends_on:
-      pgsql:
-        condition: service_healthy
-      php:
-        condition: service_healthy
     healthcheck:
+      <<: *worker-healthcheck
       test: ["CMD", "healthcheck-queue"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 256M
 
   queue-high:
-    <<: [*php, *logging]
-    environment:
-      <<: *php-environment
-      AUTORUN_ENABLED: "false"
+    <<: *worker
     command: php artisan queue:work --queue=high --tries=3 --backoff=10 --max-time=3600
-    stop_grace_period: 60s
-    depends_on:
-      pgsql:
-        condition: service_healthy
-      php:
-        condition: service_healthy
     healthcheck:
+      <<: *worker-healthcheck
       test: ["CMD", "healthcheck-queue"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 256M
 
   scheduler:
-    <<: [*php, *logging]
-    environment:
-      <<: *php-environment
-      AUTORUN_ENABLED: "false"
+    <<: *worker
     command: php artisan schedule:work
-    depends_on:
-      pgsql:
-        condition: service_healthy
-      php:
-        condition: service_healthy
     healthcheck:
+      <<: *worker-healthcheck
       test: ["CMD", "healthcheck-schedule"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 256M
 
   nginx:
     build:
-      context: .
-      dockerfile: ./.docker/nginx/Dockerfile
-      additional_contexts:
-        php: service:php
+      context: ./.docker/nginx
+      dockerfile: Dockerfile
     container_name: Nginx
     ports:
       - 80:80
