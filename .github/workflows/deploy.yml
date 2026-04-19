@@ -1,0 +1,76 @@
+# Required repo secrets:
+#   SSH_PRIVATE_KEY  - private key with access to the deploy user on the VPS
+#   SSH_USER         - e.g. "deploy" (must be in the docker group on the VPS)
+#   SSH_HOST         - VPS hostname or IP
+#   DEPLOY_PATH      - absolute path on the VPS containing .env and ssl/
+
+name: Build and deploy
+
+on:
+  push:
+    tags: ['*']
+
+env:
+  PHP_IMAGE_NAME: laravel-php
+  NGINX_IMAGE_NAME: laravel-nginx
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build PHP image
+        run: |
+          docker build \
+            --file .docker/php/Dockerfile \
+            --tag "${PHP_IMAGE_NAME}:${{ github.ref_name }}" \
+            .
+
+      - name: Build Nginx image
+        run: |
+          docker build \
+            --file .docker/nginx/Dockerfile \
+            --build-context "php=docker-image://${PHP_IMAGE_NAME}:${{ github.ref_name }}" \
+            --tag "${NGINX_IMAGE_NAME}:${{ github.ref_name }}" \
+            .
+
+      - name: Install docker-pussh (unregistry CLI plugin)
+        run: |
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL \
+            https://raw.githubusercontent.com/psviderski/unregistry/main/docker-pussh \
+            -o ~/.docker/cli-plugins/docker-pussh
+          chmod +x ~/.docker/cli-plugins/docker-pussh
+          docker pussh --help >/dev/null
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Trust deploy host
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Push images to the server via unregistry
+        run: |
+          target="${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}"
+          docker pussh "${PHP_IMAGE_NAME}:${{ github.ref_name }}"   "$target"
+          docker pussh "${NGINX_IMAGE_NAME}:${{ github.ref_name }}" "$target"
+
+      - name: Sync compose file to the server
+        run: |
+          scp docker-compose.yaml \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/docker-compose.yaml"
+
+      - name: Restart compose stack on the server
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "cd '${{ secrets.DEPLOY_PATH }}' \
+              && IMAGE_TAG='${{ github.ref_name }}' docker compose up -d --remove-orphans \
+              && docker image prune -f"

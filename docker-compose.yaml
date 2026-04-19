@@ -12,9 +12,8 @@ x-php-environment: &php-environment
   PHP_MAX_FILE_UPLOADS: "100"
 
 x-php: &php
-  build:
-    context: .
-    dockerfile: ./.docker/php/Dockerfile
+  image: laravel-php:${IMAGE_TAG:?IMAGE_TAG must be set (e.g. commit SHA)}
+  pull_policy: never
   working_dir: /var/www/html
   restart: unless-stopped
   env_file: .env
@@ -49,6 +48,7 @@ services:
     container_name: PgSQL
     image: "postgres:18-alpine"
     restart: unless-stopped
+    shm_size: 512m
     environment:
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -153,11 +153,8 @@ services:
           memory: 256M
 
   nginx:
-    build:
-      context: .
-      dockerfile: ./.docker/nginx/Dockerfile
-      additional_contexts:
-        php: service:php
+    image: laravel-nginx:${IMAGE_TAG:?IMAGE_TAG must be set (e.g. commit SHA)}
+    pull_policy: never
     container_name: Nginx
     ports:
       - 80:80
