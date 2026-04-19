@@ -17,6 +17,9 @@ x-php: &php
   build:
     context: .
     dockerfile: ./.docker/php/Dockerfile
+    args:
+      USER_ID: ${PUID:-1000}
+      GROUP_ID: ${PGID:-1000}
   working_dir: /var/www/html
   restart: unless-stopped
   env_file: .env
@@ -137,8 +140,7 @@ services:
     networks:
       - app
     volumes:
-      - ./public:/var/www/html/public:ro
-      - ./ssl:/etc/nginx/ssl:ro
+      - ./:/var/www/html:ro
     depends_on:
       php:
         condition: service_healthy
