@@ -84,6 +84,7 @@ services:
       PGDATA: /data/postgres
     volumes:
       - pgdata:/data/postgres
+    shm_size: 512m
     networks:
       - database
     healthcheck:
