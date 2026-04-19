@@ -19,7 +19,7 @@ x-php: &php
   restart: unless-stopped
   env_file: .env
   volumes:
-    - storage:/var/www/html/storage
+    - ./:/var/www/html
   expose:
     - "9000"
   networks:
@@ -41,7 +41,6 @@ networks:
   database:
 
 volumes:
-  storage:
   pgdata:
 
 services:
@@ -166,6 +165,7 @@ services:
     networks:
       - app
     volumes:
+      - ./public:/var/www/html/public:ro
       - ./ssl:/etc/nginx/ssl:ro
     depends_on:
       php:
